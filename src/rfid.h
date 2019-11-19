@@ -4,11 +4,19 @@
 #include <SPI.h>
 #include <MFRC522.h>
 
-constexpr static int SS_PIN = 15;
-constexpr static int RST_PIN = 0;
+constexpr static int VSPI_SCK = 26;
+constexpr static int VSPI_MISO = 33;
+constexpr static int VSPI_MOSI = 25;
+constexpr static int VSPI_SS = 27;
 
-MFRC522 mfrc522(SS_PIN, RST_PIN);
+constexpr static int RST_PIN = 32;
+
+MFRC522 mfrc522(VSPI_SS, RST_PIN);
 MFRC522::MIFARE_Key key;
+
+// SL uuid 8a8a4a44-21b7-4992-aae7-c1f56e97261e
+// BK uuid 4dfc22fb-1f22-43db-bdd0-001e7f4e49fe
+// JU uuid c833cc7b-48f2-4279-a18d-62bfa7c0dc6e
 
 struct uuid { unsigned char bytes[16]; };
 
@@ -87,13 +95,13 @@ void writeUUID(uuid* id) {
     }
 }
 
-void readUUID(uuid* id) {
+int readUUID(uuid* id) {
     MFRC522::StatusCode status;
     status = (MFRC522::StatusCode) mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, BLOCK_UUID_TRAILER, &key, &(mfrc522.uid));
     if (status != MFRC522::STATUS_OK) {
         Serial.print(F("error PCD_Authenticate() failed: "));
         Serial.println(mfrc522.GetStatusCodeName(status));
-        return;
+        return 1;
     }
     byte buf[18];
     byte size = sizeof(buf);
@@ -102,18 +110,20 @@ void readUUID(uuid* id) {
         Serial.print(F("error MIFARE_Read() failed: "));
         Serial.println(mfrc522.GetStatusCodeName(status));
         readUUID(id);
-        return;
+        return 1;
     }
     for (int i = 0; i < 16; i++) {
         id->bytes[i] = buf[i];
     }
     mfrc522.PICC_HaltA();
     mfrc522.PCD_StopCrypto1();
+	return 0;
 }
 
 void initRFID() {
     SPI.begin();
-    mfrc522.PCD_Init();
+	MFRC522_SPI.begin(VSPI_SCK, VSPI_MISO, VSPI_MOSI, VSPI_SS);
+	mfrc522.PCD_Init();
 }
 
 

@@ -1,32 +1,105 @@
 #include <Arduino.h>
-#include <U8x8lib.h>
-#include <ESP8266WiFi.h>
+#include <TFT_eSPI.h>
+#include <ESP32Encoder.h>
+
+// Networking imports
+#include <WiFiClientSecure.h>
+#include <WiFi.h>
 #include <DNSServer.h>
-#include <ESP8266WebServer.h>
-#include <WiFiManager.h>
-#include <ArduinoJson.h>
-#include <ESP8266HTTPClient.h>
-#include <WiFiClientSecureBearSSL.h>
+#include <WiFiManager.h> 
+#include <WebServer.h>
+
+#include "Free_Fonts.h"
+#include "bootscreen.h"
+#include "scanscreen.h"
+
 #include "rfid.h"
 #include "game.h"
 
-const static int BTN_PIN = 2;
+#define RGB565(r,g,b) ((((r>>3)<<11) | ((g>>2)<<5) | (b>>3)))
 
-#define U8LOG_WIDTH 16
-#define U8LOG_HEIGHT 4
+#define HeaderBackground RGB565(51, 143, 255)
+#define Primary RGB565(0, 134, 191)
+#define Highlight RGB565(128, 185, 255)
+#define Highlight2 RGB565(199, 255, 154)
 
-U8X8_SSD1306_128X32_UNIVISION_HW_I2C u8x8(16, 5, 4);
-U8X8LOG u8x8log;
-uint8_t u8logBuffer[U8LOG_WIDTH*U8LOG_HEIGHT];
+#define Black RGB565(0, 0, 0)
+#define Red	RGB565(255, 0, 0)
+#define Green RGB565(0, 255, 0)
+#define Blue RGB565(0, 0, 255)
+#define Gray RGB565(128, 128, 128)
+#define LighterRed RGB565(255, 150, 150)
+#define LighterGreen RGB565(150, 255, 150)
+#define LighterBlue RGB565(150, 150, 255)
+#define DarkerRed RGB565(150, 0, 0)
+#define DarkerGreen RGB565(0, 150, 0)
+#define DarkerBlue RGB565(0, 0, 150)
+#define Cyan RGB565(0, 255, 255)
+#define Magenta RGB565(255, 0, 255)
+#define Yellow RGB565(255, 255, 0)
+#define White RGB565(255, 255, 255)
+
+const static int pwmFreq = 5000;
+const static int pwmResolution = 8;
+const static int pwmLedChannelTFT = 0;
+
+const static int STATE_BOOT = 0;
+const static int STATE_CONNECT = 1;
+const static int STATE_SCAN = 2;
+const static int STATE_START = 3;
+const static int STATE_ERROR = 4;
+const static int STATE_SUCCESS = 5;
+
+const static int BTN_PIN = 17;
+
+struct input {
+    bool click;
+    bool increment;
+    bool decrement;
+};
 
 static players p;
 
+static char err[256];
+
 static bool released = false;
 
+
+
+int ledBacklight = 255;
+
+TFT_eSPI tft = TFT_eSPI();
+ESP32Encoder knob;
+WiFiClientSecure client;
+
+const char* root_ca = \ 
+"-----BEGIN CERTIFICATE-----\n" \ 
+"MIIDQTCCAimgAwIBAgITBmyfz5m/jAo54vB4ikPmljZbyjANBgkqhkiG9w0BAQsF\n" \ 
+"ADA5MQswCQYDVQQGEwJVUzEPMA0GA1UEChMGQW1hem9uMRkwFwYDVQQDExBBbWF6\n" \ 
+"b24gUm9vdCBDQSAxMB4XDTE1MDUyNjAwMDAwMFoXDTM4MDExNzAwMDAwMFowOTEL\n" \ 
+"MAkGA1UEBhMCVVMxDzANBgNVBAoTBkFtYXpvbjEZMBcGA1UEAxMQQW1hem9uIFJv\n" \ 
+"b3QgQ0EgMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALJ4gHHKeNXj\n" \ 
+"ca9HgFB0fW7Y14h29Jlo91ghYPl0hAEvrAIthtOgQ3pOsqTQNroBvo3bSMgHFzZM\n" \ 
+"9O6II8c+6zf1tRn4SWiw3te5djgdYZ6k/oI2peVKVuRF4fn9tBb6dNqcmzU5L/qw\n" \ 
+"IFAGbHrQgLKm+a/sRxmPUDgH3KKHOVj4utWp+UhnMJbulHheb4mjUcAwhmahRWa6\n" \ 
+"VOujw5H5SNz/0egwLX0tdHA114gk957EWW67c4cX8jJGKLhD+rcdqsq08p8kDi1L\n" \ 
+"93FcXmn/6pUCyziKrlA4b9v7LWIbxcceVOF34GfID5yHI9Y/QCB/IIDEgEw+OyQm\n" \ 
+"jgSubJrIqg0CAwEAAaNCMEAwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC\n" \ 
+"AYYwHQYDVR0OBBYEFIQYzIU07LwMlJQuCFmcx7IQTgoIMA0GCSqGSIb3DQEBCwUA\n" \ 
+"A4IBAQCY8jdaQZChGsV2USggNiMOruYou6r4lK5IpDB/G/wkjUu0yKGX9rbxenDI\n" \ 
+"U5PMCCjjmCXPI6T53iHTfIUJrU6adTrCC2qJeHZERxhlbI1Bjjt/msv0tadQ1wUs\n" \ 
+"N+gDS63pYaACbvXy8MWy7Vu33PqUXHeeE6V/Uq2V8viTO96LXFvKWlJbYK8U90vv\n" \ 
+"o/ufQJVtMVT8QtPHRh8jrdkPSHCa2XV4cdFyQzR1bldZwgJcJmApzyMZFo6IQ6XU\n" \ 
+"5MsI+yMRQ+hDKXJioaldXgjUkK642M4UwtBV8ob2xJNDd2ZhwLnoQdeXeGADbkpy\n" \ 
+"rqXRfboQnoZsG4q5WTP468SQvvG5\n" \ 
+"-----END CERTIFICATE-----\n" ;                 
+
+const char* server = "nucleate-bee-0940.dataplicity.io";
+
 bool buttonPressed() {
-    uint64_t t = micros64();
-    uint64_t timeout = 1000*20;
-    while (micros64() < t + timeout) {
+    uint64_t t = micros();
+    uint64_t timeout = 1000*5;
+    while (micros() < t + timeout) {
         if (digitalRead(BTN_PIN)) {
             return false;
         }
@@ -34,72 +107,240 @@ bool buttonPressed() {
     return true;
 }
 
+void bootscreen() {
+    tft.setSwapBytes(true);
+    tft.pushImage(0, 0, 240, 135, bootlogo);
+}
+
+void errorscreen() {
+    tft.setSwapBytes(true);
+    tft.pushImage(0, 0, 240, 135, errorimg);
+    tft.setFreeFont(FSSB9);
+    tft.setCursor(10, 20);
+    tft.print("Error: ");
+    tft.print(err);
+}
+
+void successscreen() {
+    tft.setSwapBytes(true);
+    tft.pushImage(0, 0, 240, 135, connectedimg);
+}
+
+void connectingscreen() {
+    tft.setSwapBytes(true);
+    tft.pushImage(0, 0, 240, 135, connectingimg);
+}
+
+void scanscreen() {
+    tft.setSwapBytes(true);
+    tft.pushImage(0, 0, 240, 135, scanimg);
+    tft.setFreeFont(FSSB9);
+    tft.setCursor(0, 0);
+    tft.print("\n\n");
+    for (int n = 0; n < p.count; n++) {
+        char id_str[37];
+        uuid_to_string(&(p.ids[n]), id_str);
+        tft.print("    ");
+        for (int i = 0; i < 7; i++) {
+            tft.print(id_str[i]);
+        }
+        tft.print('\n');
+    }
+    tft.setCursor(65, 130);
+    tft.println("Click to start");
+}
+
+void startscreen() {
+    tft.fillScreen(White);
+    tft.setFreeFont(FSSB12);
+    tft.setCursor(10, 30);
+    tft.println("Starting...");
+}
+
 void initDisplay() {
-    u8x8.begin();
-    u8x8.setFont(u8x8_font_chroma48medium8_r);
-    u8x8log.begin(u8x8, U8LOG_WIDTH, U8LOG_HEIGHT, u8logBuffer);
+    tft.init();
+    tft.fillScreen(White);
+    tft.setRotation(3);
+    tft.setTextSize(1);
+    tft.setTextWrap(false);
+    tft.setFreeFont(FSSB9);
+    tft.setTextColor(Black, White);
+
+    ledcSetup(pwmLedChannelTFT, pwmFreq, pwmResolution);
+    ledcAttachPin(TFT_BL, pwmLedChannelTFT);
+    ledcWrite(pwmLedChannelTFT, ledBacklight);
+}
+
+int scan() {
+    if (!mfrc522.PICC_IsNewCardPresent()) {
+        return 1;
+    }
+    if (!mfrc522.PICC_ReadCardSerial()) {
+        return 1;
+    }
+    uuid id;
+    if (readUUID(&id)) {
+        return 1;
+    };
+    char id_str[37];
+    uuid_to_string(&id, id_str);
+
+    if (!contains(&p, &id) && p.count < 4) {
+        add(&p, &id);
+        Serial.print("uuid ");
+        Serial.println(id_str);
+        return 0;
+    }
+    return 1;
 }
 
 void initWiFi() {
-    u8x8log.println("skip wifi?");
-    for (int i = 3; i > 0; i--) {
-        u8x8log.println(i);
-        for (int t = 0; t < 1000; t++) {
-            if (buttonPressed()) {
-                u8x8log.println("skipping wifi");
-                return;
-            }
-            delay(1);
-        }
+    WiFiManager wifiManager;
+    wifiManager.autoConnect("parsable-rfid-config");
+    Serial.println("connected!");
+    client.setCACert(root_ca);
+}
+
+
+bool pongboardStart() {
+    Serial.println("\nStarting connection to server...");
+    if (!client.connect(server, 443)) {
+        Serial.println("Connection failed!");
+        return 1;
     }
-    u8x8log.println("waiting for wifi");
-    WiFiManager manager;
-    manager.autoConnect("rfid-ctl");
-    u8x8log.println("connected!");
+    else {
+        StaticJsonDocument<512> doc;
+        doc.clear();
+        JsonObject root = doc.to<JsonObject>();
+        JsonArray ids = root.createNestedArray("players");
+
+        for (int n = 0; n < p.count; n++) {
+            char id_str[37];
+            uuid_to_string(&(p.ids[n]), id_str);
+            ids.add(id_str);
+        }
+        serializeJsonPretty(root, Serial);
+        Serial.println("");
+        String payload;
+        serializeJson(doc, payload);
+
+        Serial.println("Connected to server!");
+        client.println("POST https://nucleate-bee-0940.dataplicity.io/start2 HTTP/1.0");
+        client.println("Content-Type: application/json");
+        client.println("Accept: application/json");
+        client.println("Host: nucleate-bee-0940.dataplicity.io");
+        client.println("Connection: close");
+        client.println("Content-Length: " + String(payload.length()));
+        client.println();
+        client.println(payload);
+        client.println();
+
+        while (client.connected()) {
+            String line = client.readStringUntil('\n');
+            if (line == "\r") {
+                Serial.println("headers received");
+                break;
+            }
+        }
+  
+        while (client.available()) {
+            char c = client.read();
+            Serial.write(c);
+        }
+        client.stop();
+        return 0;
+    }
 }
 
-void getScoreHTTPS() {
-    std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
-    client->setInsecure();
-    HTTPClient https;
-    https.begin(*client, "https://nucleate-bee-0940.dataplicity.io/score");
-    int httpCode = https.GET();
-    String payload = https.getString();
-    u8x8log.println(httpCode);
-    u8x8log.println(payload);
-    Serial.println(httpCode);
-    Serial.println(payload);
+bool pongboardReset() {
+    Serial.println("\nStarting connection to server...");
+    if (!client.connect(server, 443)) {
+        Serial.println("Connection failed!");
+        return 1;
+    }
+    else {
+        Serial.println("Connected to server!");
+        client.println("POST https://nucleate-bee-0940.dataplicity.io/reset HTTP/1.0");
+        client.println("Host: nucleate-bee-0940.dataplicity.io");
+        client.println("Connection: close");
+        client.println();
+
+        while (client.connected()) {
+            String line = client.readStringUntil('\n');
+            if (line == "\r") {
+                Serial.println("headers received");
+                break;
+            }
+        }
+        while (client.available()) {
+            char c = client.read();
+            Serial.write(c);
+        }
+        client.stop();
+        return 0;
+    }
 }
 
-void postStart() {
 
+int next(int state, input in) {
+    switch (state) {
+    case STATE_BOOT:
+        bootscreen();
+        delay(4000);
+        scanscreen();
+        return STATE_CONNECT;
+    case STATE_CONNECT:
+        connectingscreen();
+        delay(1000);
+        initWiFi();
+        scanscreen();
+        return STATE_SCAN;
+    case STATE_SCAN:
+        if (in.click) {
+            return STATE_START;
+        }
+        if (!scan()) {
+            scanscreen();
+        }
+        return STATE_SCAN;
+    case STATE_START:
+        startscreen();
+        if (p.count != 2 && p.count != 4) {
+            p.count = 0;
+            sprintf(err, "scan 2 or 4 cards");
+            return STATE_ERROR;    
+        }
+        if (!pongboardStart()) {
+            p.count = 0;
+            return STATE_SUCCESS;
+        }
+        p.count = 0;
+        sprintf(err, "unknown error occurred");
+        return STATE_ERROR;
+    case STATE_ERROR:
+        errorscreen();
+        delay(3000);
+        scanscreen();
+        return STATE_SCAN;
+    case STATE_SUCCESS:
+        successscreen();
+        delay(3000);
+        scanscreen();
+        return STATE_SCAN;
+    default:
+        return state;
+    }
 }
-
-    // StaticJsonBuffer<300> JSONbuffer;
-    // JsonObject& JSONencoder = JSONbuffer.createObject();
-
-    // JSONencoder["value"] = value_var;
-    // char JSONmessageBuffer[300];
-    // JSONencoder.prettyPrintTo(JSONmessageBuffer, sizeof(JSONmessageBuffer));
-
-    // HTTPClient http;
-
-    // http.begin("https://nucleate-bee-0940.dataplicity.io/score");
-    // http.addHeader("Content-Type", "application/json");
-
-    // int httpCode = http.POST(JSONmessageBuffer);
-    // String payload = http.getString();
 
 void setup() {
     Serial.begin(115200);
-    pinMode(BTN_PIN, INPUT_PULLUP);
 
     initDisplay();
-    u8x8log.println("RFID-CTL");
-    initWiFi();
     initRFID();
 
-    getScoreHTTPS();
+    pinMode(BTN_PIN, INPUT_PULLUP);
+	
+    ESP32Encoder::useInternalWeakPullResistors = true;
 
     // Prepare the key (used both as key A and as key B)
     // using FFFFFFFFFFFFh which is the default at chip delivery from the factory.
@@ -109,43 +350,28 @@ void setup() {
     }
 
     Serial.println("ready");
-    u8x8log.println("ready");
-
-    uuid x = {0x7B,0x0A,0xE2,0x6F,0x5C,0x36,0x49,0xF4,0x96,0xF6,0x79,0x0D,0xA5,0x91,0xDD,0x5A};
-    uuid y = {0x53,0x7D,0x6A,0x4F,0xC9,0xB6,0x49,0xF2,0xAA,0xFB,0xE0,0xCD,0xF4,0xBD,0xA1,0x6D};
-    clear(&p);
-    add(&p, &x);
-    add(&p, &y);
-    StaticJsonDocument<200> doc;
-    json(&p, &doc);
-    serializeJson(doc, Serial);
 }
 
 void loop() {
+    static int state = STATE_BOOT;
+    input in;
+
     if (digitalRead(BTN_PIN)) {
         released = true;
     }
     if (released && buttonPressed()) {
         released = false;
+        in.click = true;
         Serial.println("start");
-        u8x8log.println("start");
+    } else {
+        in.click = false;
     }
-    if (!mfrc522.PICC_IsNewCardPresent()) {
-        return;
+    int old = state;
+    state = next(state, in);
+    if (state != old) {
+        Serial.print("old ");
+        Serial.print(old);
+        Serial.print(" new ");
+        Serial.println(state);
     }
-    if (!mfrc522.PICC_ReadCardSerial()) {
-        return;
-    }
-    
-    uuid id;
-    readUUID(&id);
-    char id_str[37];
-    uuid_to_string(&id, id_str);
-
-    Serial.print("uuid ");
-    Serial.println(id_str);
-    for (int i = 0; i < 8; i++) {
-        u8x8log.print(id_str[i]);
-    }
-    u8x8log.print('\n');
 }

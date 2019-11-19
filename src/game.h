@@ -14,9 +14,19 @@ struct players {
 
 bool contains(players* p, uuid* id) {
     for (int n = 0; n < p->count; n++) {
-        if (memcmp(p->ids[n].bytes, id->bytes, 16)) {
+        if (!memcmp(p->ids[n].bytes, id->bytes, 16)) {
             return true;
         }
+        // for (int i = 0; i < 16; i++) {
+        //     Serial.print(i);
+        //     Serial.print(" ");
+        //     Serial.print(p->ids[n].bytes[i]);
+        //     Serial.print(" ");
+        //     Serial.print(id->bytes[i]);
+        //     Serial.print("\n");
+   
+        // }
+
     }
     return false;
 }
