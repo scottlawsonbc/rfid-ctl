@@ -17,6 +17,7 @@ MFRC522::MIFARE_Key key;
 // SL uuid 8a8a4a44-21b7-4992-aae7-c1f56e97261e
 // BK uuid 4dfc22fb-1f22-43db-bdd0-001e7f4e49fe
 // JU uuid c833cc7b-48f2-4279-a18d-62bfa7c0dc6e
+// DB uuid aabbccdd-eeff-1122-3344-556677889900
 
 struct uuid { unsigned char bytes[16]; };
 
@@ -61,39 +62,53 @@ char* uuid_to_string(uuid* id, char* out) {
 }
 
 bool uuid_from_string(const char* str, uuid* out) {
-	char uuid_str[32];
-	char* outc = uuid_str;
-	for(int i = 0; i < 36; ++i) {
-		char c = str[i];
-		if(i == 8 || i == 13 || i == 18 || i == 23) {
-			if(c != '-' )
-				return false;
+	char val[3];
+	val[2] = '\0';
+	int idx = 0;
+
+	// 8a8a4a44-21b7-4992-aae7-c1f56e97261e
+    // 012345678901234567890123
+
+	for (int i = 0; i < 16; i++) {
+		if(idx == 8 || idx == 13 || idx == 18 || idx == 23) {
+			idx++;
 		}
-		else {
-			if(!isxdigit(c))
-				return false;
-			*outc = (char)tolower(c);
-			++outc;
-		}
+
+		val[0] = str[idx];
+		val[1] = str[idx+1];
+		idx += 2;
+		char result = strtoul(val, NULL, 16); 
+		out->bytes[i] = result;
+		Serial.print(i);
+		Serial.print(" ");
+		Serial.print(val);
+		Serial.print(" ");
+		Serial.print(idx);
+		Serial.print(" ");
+		Serial.println(int(result));
 	}
 	return true;
 }
 
-void writeUUID(uuid* id) {
+
+int writeUUID(uuid* id) {
     MFRC522::StatusCode status;
     status = (MFRC522::StatusCode) mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, BLOCK_UUID_TRAILER, &key, &(mfrc522.uid));
     if (status != MFRC522::STATUS_OK) {
         Serial.print(F("error PCD_Authenticate() failed: "));
         Serial.println(mfrc522.GetStatusCodeName(status));
-        return;
+        return 1;
     }
     status = (MFRC522::StatusCode) mfrc522.MIFARE_Write(BLOCK_UUID, id->bytes, 16);
     if (status != MFRC522::STATUS_OK) {
         Serial.print(F("error MIFARE_Write() failed: "));
         Serial.println(mfrc522.GetStatusCodeName(status));
-        return;
+        return 1;
     }
+	Serial.println("Write successful");
+	return 0;
 }
+
 
 int readUUID(uuid* id) {
     MFRC522::StatusCode status;

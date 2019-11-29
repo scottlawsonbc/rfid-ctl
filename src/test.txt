@@ -1,7 +1,0 @@
-ready
-uuid aaaaaaaa
-uuid bbbbbbbb
-start
-uuid aaaaaaaa
-uuid bbbbbbbb
-start

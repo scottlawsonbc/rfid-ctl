@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include <TFT_eSPI.h>
-#include <ESP32Encoder.h>
 
 // Networking imports
 #include <WiFiClientSecure.h>
@@ -10,8 +9,7 @@
 #include <WebServer.h>
 
 #include "Free_Fonts.h"
-#include "bootscreen.h"
-#include "scanscreen.h"
+#include "image.h"
 
 #include "rfid.h"
 #include "game.h"
@@ -49,6 +47,7 @@ const static int STATE_SCAN = 2;
 const static int STATE_START = 3;
 const static int STATE_ERROR = 4;
 const static int STATE_SUCCESS = 5;
+const static int STATE_PROGRAM = 6;
 
 const static int BTN_PIN = 17;
 
@@ -58,43 +57,44 @@ struct input {
     bool decrement;
 };
 
+// AsyncWebServer server(80);
+
 static players p;
 
 static char err[256];
+static char buf[256];
+static int bufIndex = 0;
 
 static bool released = false;
-
-
 
 int ledBacklight = 255;
 
 TFT_eSPI tft = TFT_eSPI();
-ESP32Encoder knob;
 WiFiClientSecure client;
 
-const char* root_ca = \ 
-"-----BEGIN CERTIFICATE-----\n" \ 
-"MIIDQTCCAimgAwIBAgITBmyfz5m/jAo54vB4ikPmljZbyjANBgkqhkiG9w0BAQsF\n" \ 
-"ADA5MQswCQYDVQQGEwJVUzEPMA0GA1UEChMGQW1hem9uMRkwFwYDVQQDExBBbWF6\n" \ 
-"b24gUm9vdCBDQSAxMB4XDTE1MDUyNjAwMDAwMFoXDTM4MDExNzAwMDAwMFowOTEL\n" \ 
-"MAkGA1UEBhMCVVMxDzANBgNVBAoTBkFtYXpvbjEZMBcGA1UEAxMQQW1hem9uIFJv\n" \ 
-"b3QgQ0EgMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALJ4gHHKeNXj\n" \ 
-"ca9HgFB0fW7Y14h29Jlo91ghYPl0hAEvrAIthtOgQ3pOsqTQNroBvo3bSMgHFzZM\n" \ 
-"9O6II8c+6zf1tRn4SWiw3te5djgdYZ6k/oI2peVKVuRF4fn9tBb6dNqcmzU5L/qw\n" \ 
-"IFAGbHrQgLKm+a/sRxmPUDgH3KKHOVj4utWp+UhnMJbulHheb4mjUcAwhmahRWa6\n" \ 
-"VOujw5H5SNz/0egwLX0tdHA114gk957EWW67c4cX8jJGKLhD+rcdqsq08p8kDi1L\n" \ 
-"93FcXmn/6pUCyziKrlA4b9v7LWIbxcceVOF34GfID5yHI9Y/QCB/IIDEgEw+OyQm\n" \ 
-"jgSubJrIqg0CAwEAAaNCMEAwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC\n" \ 
-"AYYwHQYDVR0OBBYEFIQYzIU07LwMlJQuCFmcx7IQTgoIMA0GCSqGSIb3DQEBCwUA\n" \ 
-"A4IBAQCY8jdaQZChGsV2USggNiMOruYou6r4lK5IpDB/G/wkjUu0yKGX9rbxenDI\n" \ 
-"U5PMCCjjmCXPI6T53iHTfIUJrU6adTrCC2qJeHZERxhlbI1Bjjt/msv0tadQ1wUs\n" \ 
-"N+gDS63pYaACbvXy8MWy7Vu33PqUXHeeE6V/Uq2V8viTO96LXFvKWlJbYK8U90vv\n" \ 
-"o/ufQJVtMVT8QtPHRh8jrdkPSHCa2XV4cdFyQzR1bldZwgJcJmApzyMZFo6IQ6XU\n" \ 
-"5MsI+yMRQ+hDKXJioaldXgjUkK642M4UwtBV8ob2xJNDd2ZhwLnoQdeXeGADbkpy\n" \ 
-"rqXRfboQnoZsG4q5WTP468SQvvG5\n" \ 
-"-----END CERTIFICATE-----\n" ;                 
+const char* root_ca = \
+"-----BEGIN CERTIFICATE-----\n"\
+"MIIDQTCCAimgAwIBAgITBmyfz5m/jAo54vB4ikPmljZbyjANBgkqhkiG9w0BAQsF\n"\
+"ADA5MQswCQYDVQQGEwJVUzEPMA0GA1UEChMGQW1hem9uMRkwFwYDVQQDExBBbWF6\n"\
+"b24gUm9vdCBDQSAxMB4XDTE1MDUyNjAwMDAwMFoXDTM4MDExNzAwMDAwMFowOTEL\n"\
+"MAkGA1UEBhMCVVMxDzANBgNVBAoTBkFtYXpvbjEZMBcGA1UEAxMQQW1hem9uIFJv\n"\
+"b3QgQ0EgMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALJ4gHHKeNXj\n"\
+"ca9HgFB0fW7Y14h29Jlo91ghYPl0hAEvrAIthtOgQ3pOsqTQNroBvo3bSMgHFzZM\n"\
+"9O6II8c+6zf1tRn4SWiw3te5djgdYZ6k/oI2peVKVuRF4fn9tBb6dNqcmzU5L/qw\n"\
+"IFAGbHrQgLKm+a/sRxmPUDgH3KKHOVj4utWp+UhnMJbulHheb4mjUcAwhmahRWa6\n"\
+"VOujw5H5SNz/0egwLX0tdHA114gk957EWW67c4cX8jJGKLhD+rcdqsq08p8kDi1L\n"\
+"93FcXmn/6pUCyziKrlA4b9v7LWIbxcceVOF34GfID5yHI9Y/QCB/IIDEgEw+OyQm\n"\
+"jgSubJrIqg0CAwEAAaNCMEAwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC\n"\
+"AYYwHQYDVR0OBBYEFIQYzIU07LwMlJQuCFmcx7IQTgoIMA0GCSqGSIb3DQEBCwUA\n"\
+"A4IBAQCY8jdaQZChGsV2USggNiMOruYou6r4lK5IpDB/G/wkjUu0yKGX9rbxenDI\n"\
+"U5PMCCjjmCXPI6T53iHTfIUJrU6adTrCC2qJeHZERxhlbI1Bjjt/msv0tadQ1wUs\n"\
+"N+gDS63pYaACbvXy8MWy7Vu33PqUXHeeE6V/Uq2V8viTO96LXFvKWlJbYK8U90vv\n"\
+"o/ufQJVtMVT8QtPHRh8jrdkPSHCa2XV4cdFyQzR1bldZwgJcJmApzyMZFo6IQ6XU\n"\
+"5MsI+yMRQ+hDKXJioaldXgjUkK642M4UwtBV8ob2xJNDd2ZhwLnoQdeXeGADbkpy\n"\
+"rqXRfboQnoZsG4q5WTP468SQvvG5\n"\
+"-----END CERTIFICATE-----\n";               
 
-const char* server = "nucleate-bee-0940.dataplicity.io";
+const char* hostname = "nucleate-bee-0940.dataplicity.io";
 
 bool buttonPressed() {
     uint64_t t = micros();
@@ -141,7 +141,7 @@ void scanscreen() {
         char id_str[37];
         uuid_to_string(&(p.ids[n]), id_str);
         tft.print("    ");
-        for (int i = 0; i < 7; i++) {
+        for (int i = 0; i < 8; i++) {
             tft.print(id_str[i]);
         }
         tft.print('\n');
@@ -153,8 +153,30 @@ void scanscreen() {
 void startscreen() {
     tft.fillScreen(White);
     tft.setFreeFont(FSSB12);
-    tft.setCursor(10, 30);
-    tft.println("Starting...");
+    tft.setCursor(0, 30);
+    tft.println("DEBUG INFO");
+    tft.setFreeFont(FSSB9);
+    tft.println("Connecting...");
+}
+
+void programscreen() {
+    tft.fillScreen(White);
+    tft.setFreeFont(FSSB12);
+    tft.setCursor(0, 30);
+    tft.println("WRITE MODE");
+    tft.setFreeFont(FSSB9);
+    tft.println("Tap to program card.");
+    tft.print("UUID: ");
+    for (int i = 0; i < 8; i++) {
+        tft.print(buf[i]);
+    }
+}
+
+void programmedscreen() {
+    tft.fillScreen(White);
+    tft.setFreeFont(FSSB12);
+    tft.setCursor(0, 30);
+    tft.println("Card programmed");
 }
 
 void initDisplay() {
@@ -165,7 +187,6 @@ void initDisplay() {
     tft.setTextWrap(false);
     tft.setFreeFont(FSSB9);
     tft.setTextColor(Black, White);
-
     ledcSetup(pwmLedChannelTFT, pwmFreq, pwmResolution);
     ledcAttachPin(TFT_BL, pwmLedChannelTFT);
     ledcWrite(pwmLedChannelTFT, ledBacklight);
@@ -178,6 +199,7 @@ int scan() {
     if (!mfrc522.PICC_ReadCardSerial()) {
         return 1;
     }
+
     uuid id;
     if (readUUID(&id)) {
         return 1;
@@ -194,18 +216,41 @@ int scan() {
     return 1;
 }
 
+int program() {
+    if (!mfrc522.PICC_IsNewCardPresent()) {
+        return 1;
+    }
+    if (!mfrc522.PICC_ReadCardSerial()) {
+        return 1;
+    }
+
+    uuid id;
+    uuid_from_string(buf, &id);
+
+    int err = writeUUID(&id);
+
+    char str[50];
+    uuid_to_string(&id, str);
+
+    Serial.println(str);
+    return err;
+}
+
 void initWiFi() {
     WiFiManager wifiManager;
     wifiManager.autoConnect("parsable-rfid-config");
     Serial.println("connected!");
     client.setCACert(root_ca);
+    Serial.println(WiFi.localIP());
 }
-
 
 bool pongboardStart() {
     Serial.println("\nStarting connection to server...");
-    if (!client.connect(server, 443)) {
+
+    if (!client.connect(hostname, 443)) {
         Serial.println("Connection failed!");
+        tft.println("Connection failed!");
+        delay(2000);
         return 1;
     }
     else {
@@ -224,6 +269,7 @@ bool pongboardStart() {
         String payload;
         serializeJson(doc, payload);
 
+        tft.println("Sending payload...");
         Serial.println("Connected to server!");
         client.println("POST https://nucleate-bee-0940.dataplicity.io/start2 HTTP/1.0");
         client.println("Content-Type: application/json");
@@ -239,6 +285,7 @@ bool pongboardStart() {
             String line = client.readStringUntil('\n');
             if (line == "\r") {
                 Serial.println("headers received");
+                tft.println("Got response from server.");
                 break;
             }
         }
@@ -246,15 +293,17 @@ bool pongboardStart() {
         while (client.available()) {
             char c = client.read();
             Serial.write(c);
+            tft.print(c);
         }
         client.stop();
+        delay(3000);
         return 0;
     }
 }
 
 bool pongboardReset() {
     Serial.println("\nStarting connection to server...");
-    if (!client.connect(server, 443)) {
+    if (!client.connect(hostname, 443)) {
         Serial.println("Connection failed!");
         return 1;
     }
@@ -268,6 +317,7 @@ bool pongboardReset() {
         while (client.connected()) {
             String line = client.readStringUntil('\n');
             if (line == "\r") {
+                tft.println("Got response from server.");
                 Serial.println("headers received");
                 break;
             }
@@ -280,7 +330,6 @@ bool pongboardReset() {
         return 0;
     }
 }
-
 
 int next(int state, input in) {
     switch (state) {
@@ -297,6 +346,7 @@ int next(int state, input in) {
         return STATE_SCAN;
     case STATE_SCAN:
         if (in.click) {
+            startscreen();
             return STATE_START;
         }
         if (!scan()) {
@@ -304,7 +354,6 @@ int next(int state, input in) {
         }
         return STATE_SCAN;
     case STATE_START:
-        startscreen();
         if (p.count != 2 && p.count != 4) {
             p.count = 0;
             sprintf(err, "scan 2 or 4 cards");
@@ -327,21 +376,53 @@ int next(int state, input in) {
         delay(3000);
         scanscreen();
         return STATE_SCAN;
+    case STATE_PROGRAM:
+        if (!program()) {
+            Serial.println("Programmed card");
+            programmedscreen();
+            delay(2000);
+            p.count = 0;
+            scanscreen();
+            return STATE_SCAN;
+        }
+        return STATE_PROGRAM;
     default:
         return state;
     }
 }
+// 00112233-4455-6677-8899-aabbccddeeff
+// 00 11 22 33 44 55 66 77 88 99 aa bb cc dd ee ff
+
+void uuidTest() {
+    //  abcdefgh-1234-9876-0000-000111000111
+    char buf[50] = "8a8a4a44-21b7-4992-aae7-c1f56e97261e";
+    char out[50];
+
+    uuid id;
+    uuid_from_string(buf, &id);
+
+    uuid_to_string(&id, out);
+    Serial.println("ORIGINAL UUID");
+    Serial.println(buf);
+    Serial.println("CONVERTED UUID");
+    Serial.println(out);
+
+
+}
+
 
 void setup() {
     Serial.begin(115200);
-
+    while (Serial.available()) {
+        Serial.read();
+    }
     initDisplay();
     initRFID();
+    uuidTest();
+    
 
     pinMode(BTN_PIN, INPUT_PULLUP);
 	
-    ESP32Encoder::useInternalWeakPullResistors = true;
-
     // Prepare the key (used both as key A and as key B)
     // using FFFFFFFFFFFFh which is the default at chip delivery from the factory.
     // Key is needed for authentication when reading/writing blocks.
@@ -352,9 +433,31 @@ void setup() {
     Serial.println("ready");
 }
 
+
 void loop() {
     static int state = STATE_BOOT;
     input in;
+
+    while (Serial.available()) {
+        char c = Serial.read();
+        if (c == '\n') {
+            buf[bufIndex] = '\0';
+            if (bufIndex == 37) {
+                Serial.println("Got a UUID");
+                Serial.println(buf);
+                programscreen();
+                state = STATE_PROGRAM;
+            } else {
+                Serial.print("Unrecognized string: ");
+                Serial.println(buf);
+                Serial.println(bufIndex);
+            }
+            bufIndex = 0;
+        } else {
+            buf[bufIndex] = c;
+            bufIndex++;
+        }
+    }
 
     if (digitalRead(BTN_PIN)) {
         released = true;
@@ -369,9 +472,10 @@ void loop() {
     int old = state;
     state = next(state, in);
     if (state != old) {
-        Serial.print("old ");
+        Serial.print("state transition: old ");
         Serial.print(old);
         Serial.print(" new ");
         Serial.println(state);
     }
+
 }
